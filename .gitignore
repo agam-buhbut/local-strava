@@ -16,3 +16,4 @@
 # Build outputs
 app/build/
 build/
+.kotlin/

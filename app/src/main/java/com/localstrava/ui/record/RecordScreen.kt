@@ -1,8 +1,11 @@
 package com.localstrava.ui.record
 
 import android.Manifest
+import android.content.Intent
 import android.content.pm.PackageManager
+import android.net.Uri
 import android.os.Build
+import android.provider.Settings
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -24,14 +27,17 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.localstrava.format.Format
 import com.localstrava.tracking.TrackPhase
@@ -45,8 +51,9 @@ fun RecordScreen(
     onExitToHistory: () -> Unit,
     vm: RecordViewModel = viewModel(),
 ) {
-    val state by vm.state.collectAsState()
+    val state by vm.state.collectAsStateWithLifecycle()
     val context = LocalContext.current
+    var showSettingsHint by remember { mutableStateOf(false) }
 
     LaunchedEffect(state.phase) {
         when (val p = state.phase) {
@@ -70,14 +77,20 @@ fun RecordScreen(
         val fine = result[Manifest.permission.ACCESS_FINE_LOCATION] == true ||
             ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) ==
             PackageManager.PERMISSION_GRANTED
-        if (fine) vm.start() // notification denial is non-fatal (spec §8)
+        if (fine) { showSettingsHint = false; vm.start() } else { showSettingsHint = true }
+        // notification denial is non-fatal (spec §8)
     }
 
     fun onStartClicked() {
         val fine = ContextCompat.checkSelfPermission(
             context, Manifest.permission.ACCESS_FINE_LOCATION,
         ) == PackageManager.PERMISSION_GRANTED
-        if (fine) vm.start() else launcher.launch(perms)
+        if (fine) {
+            vm.start()
+        } else {
+            showSettingsHint = false
+            launcher.launch(perms)
+        }
     }
 
     Scaffold(topBar = { TopAppBar(title = { Text("Record") }) }) { padding ->
@@ -94,6 +107,29 @@ fun RecordScreen(
                         color = MaterialTheme.colorScheme.onErrorContainer,
                         textAlign = TextAlign.Center,
                     )
+                }
+            }
+            if (showSettingsHint && !state.isActive) {
+                Surface(color = MaterialTheme.colorScheme.errorContainer, modifier = Modifier.fillMaxWidth()) {
+                    Column(
+                        Modifier.padding(12.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                    ) {
+                        Text(
+                            "Location permission is required to record a run.",
+                            color = MaterialTheme.colorScheme.onErrorContainer,
+                            textAlign = TextAlign.Center,
+                        )
+                        Spacer(Modifier.height(8.dp))
+                        Button(onClick = {
+                            context.startActivity(
+                                Intent(
+                                    Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                                    Uri.fromParts("package", context.packageName, null),
+                                ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+                            )
+                        }) { Text("Open settings") }
+                    }
                 }
             }
             BigStat("Time", Format.duration(state.movingTimeMs))

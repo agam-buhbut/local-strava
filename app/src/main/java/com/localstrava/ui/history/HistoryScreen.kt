@@ -18,12 +18,12 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.localstrava.data.Activity
 import com.localstrava.format.Format
@@ -41,8 +41,8 @@ fun HistoryScreen(
     onOpenRun: (Long) -> Unit,
     vm: HistoryViewModel = viewModel(),
 ) {
-    val runs by vm.runs.collectAsState()
-    val tracking by TrackingStateHolder.state.collectAsState()
+    val runs by vm.runs.collectAsStateWithLifecycle()
+    val tracking by TrackingStateHolder.state.collectAsStateWithLifecycle()
 
     Scaffold(
         topBar = { TopAppBar(title = { Text("Local Strava") }) },

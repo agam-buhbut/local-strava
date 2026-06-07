@@ -6,6 +6,7 @@ import androidx.lifecycle.viewModelScope
 import com.localstrava.data.Activity
 import com.localstrava.data.ActivityRepository
 import com.localstrava.data.RunDatabase
+import com.localstrava.tracking.TrackingStateHolder
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -16,8 +17,11 @@ class HistoryViewModel(app: Application) : AndroidViewModel(app) {
     private val repo = ActivityRepository(RunDatabase.get(app).runDao())
 
     init {
-        // Finalize/discard any run left in-progress by a crash or kill (spec §3.9).
-        viewModelScope.launch(Dispatchers.IO) { repo.recoverInProgress() }
+        // Recover only orphans left by a crash/kill — never the run that's currently
+        // recording (its endedAt is null for the whole run, so it would match otherwise).
+        if (!TrackingStateHolder.state.value.isActive) {
+            viewModelScope.launch(Dispatchers.IO) { repo.recoverInProgress() }
+        }
     }
 
     val runs: StateFlow<List<Activity>> =

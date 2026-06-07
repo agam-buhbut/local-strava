@@ -16,7 +16,6 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -29,6 +28,7 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.localstrava.data.TrackPoint
 import com.localstrava.format.Format
@@ -42,7 +42,7 @@ import org.osmdroid.views.overlay.Polyline
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun DetailScreen(activityId: Long, onBack: () -> Unit, vm: DetailViewModel = viewModel()) {
-    val state by vm.state.collectAsState()
+    val state by vm.state.collectAsStateWithLifecycle()
     var confirmDelete by remember { mutableStateOf(false) }
     LaunchedEffect(activityId) { vm.load(activityId) }
 
@@ -113,6 +113,7 @@ private fun RouteMap(points: List<TrackPoint>) {
             setMultiTouchControls(true)
         }
     }
+    var didFit by remember { mutableStateOf(false) }
     DisposableEffectMapLifecycle(lifecycleOwner, mapView)
     AndroidView(
         modifier = Modifier.fillMaxSize(),
@@ -134,9 +135,12 @@ private fun RouteMap(points: List<TrackPoint>) {
             map.overlays.add(Marker(map).apply { position = GeoPoint(first.latitude, first.longitude); title = "Start" })
             map.overlays.add(Marker(map).apply { position = GeoPoint(last.latitude, last.longitude); title = "End" })
 
-            map.post {
-                val box = BoundingBox.fromGeoPoints(points.map { GeoPoint(it.latitude, it.longitude) })
-                map.zoomToBoundingBox(box.increaseByScale(1.3f), false, 48)
+            if (!didFit) {
+                didFit = true
+                map.post {
+                    val box = BoundingBox.fromGeoPoints(points.map { GeoPoint(it.latitude, it.longitude) })
+                    map.zoomToBoundingBox(box.increaseByScale(1.3f), false, 48)
+                }
             }
             map.invalidate()
         },
@@ -157,6 +161,7 @@ private fun DisposableEffectMapLifecycle(
             }
         }
         lifecycleOwner.lifecycle.addObserver(obs)
+        if (lifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)) mapView.onResume()
         onDispose {
             lifecycleOwner.lifecycle.removeObserver(obs)
             mapView.onDetach()

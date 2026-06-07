@@ -37,6 +37,9 @@ class RunAccumulator {
 
     private val window = ArrayDeque<WindowSample>()
 
+    private data class SpeedSample(val lat: Double, val lon: Double, val timeMs: Long)
+    private val speedWindow = ArrayDeque<SpeedSample>()
+
     // Elevation
     private val altBuffer = ArrayDeque<Double>()
     private var lastCommittedAlt: Double? = null
@@ -99,13 +102,14 @@ class RunAccumulator {
         teleportRejects = 0
 
         // Stationary: advance anchor (so the next dt stays small) but add no distance/time.
-        val speed = fix.speedMps?.toDouble() ?: (dist / dtSec)
+        val speed = effectiveSpeed(fix, dist, dtSec)
         if (speed < Constants.STATIONARY_SPEED_MPS) {
             anchor = Anchor(fix.latitude, fix.longitude, fix.timeMs)
             return null
         }
 
         if (dist < Constants.MIN_DUP_M) {
+            // Sub-MIN_DUP_M displacement is intentionally dropped as dedup, not banked.
             anchor = Anchor(fix.latitude, fix.longitude, fix.timeMs)
             return null
         }
@@ -123,6 +127,9 @@ class RunAccumulator {
     private fun startSegment(fix: Fix, segmentBreak: Boolean): AcceptedPoint {
         anchor = Anchor(fix.latitude, fix.longitude, fix.timeMs)
         teleportRejects = 0
+        // Reset the speed window so net displacement never spans a break/gap.
+        speedWindow.clear()
+        speedWindow.addLast(SpeedSample(fix.latitude, fix.longitude, fix.timeMs))
         updateElevation(fix)
         addToWindow(fix, segmentBreak)
         points++
@@ -136,7 +143,8 @@ class RunAccumulator {
 
         altBuffer.addLast(alt)
         while (altBuffer.size > Constants.ELEV_SMOOTH_WINDOW) altBuffer.removeFirst()
-        val smoothed = altBuffer.sorted()[altBuffer.size / 2] // median of last ≤5
+        // Median of last ≤5; on an even count this takes the upper-middle by design.
+        val smoothed = altBuffer.sorted()[altBuffer.size / 2]
 
         val last = lastCommittedAlt
         if (last == null) {
@@ -152,7 +160,30 @@ class RunAccumulator {
         }
     }
 
+    /**
+     * Speed used by the stationary gate: the device value when present, otherwise the net
+     * displacement over a short trailing window divided by its span. The windowed form
+     * averages raw GPS jitter (~1–2 m/fix while standing still) toward zero so auto-pause
+     * does not leak distance/time (spec §5 step 4).
+     */
+    private fun effectiveSpeed(fix: Fix, dist: Double, dtSec: Double): Double {
+        speedWindow.addLast(SpeedSample(fix.latitude, fix.longitude, fix.timeMs))
+        while (speedWindow.size > 1 &&
+            fix.timeMs - speedWindow.first().timeMs > Constants.STATIONARY_WINDOW_MS) {
+            speedWindow.removeFirst()
+        }
+        fix.speedMps?.let { return it.toDouble() }
+        val oldest = speedWindow.first()
+        val spanMs = fix.timeMs - oldest.timeMs
+        if (spanMs < Constants.MIN_SPEED_WINDOW_MS) return if (dtSec > 0) dist / dtSec else 0.0
+        val net = GeoMath.haversineMeters(oldest.lat, oldest.lon, fix.latitude, fix.longitude)
+        return net / (spanMs / 1000.0)
+    }
+
     private fun addToWindow(fix: Fix, segmentBreak: Boolean) {
+        // Clear the window at a break so currentPace never spans the dead time of a
+        // gap/resume (pre-break samples contribute no distance but inflate windowTime).
+        if (segmentBreak) window.clear()
         window.addLast(WindowSample(fix.latitude, fix.longitude, fix.timeMs, segmentBreak))
     }
 

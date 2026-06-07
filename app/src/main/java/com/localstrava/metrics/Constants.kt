@@ -10,6 +10,8 @@ object Constants {
 
     // Motion / filtering
     const val STATIONARY_SPEED_MPS = 0.5
+    const val STATIONARY_WINDOW_MS = 5_000L
+    const val MIN_SPEED_WINDOW_MS = 2_000L
     const val MIN_DUP_M = 1.0
     const val MAX_PLAUSIBLE_SPEED_MPS = 12.0
     const val MAX_JUMP_M = 200.0

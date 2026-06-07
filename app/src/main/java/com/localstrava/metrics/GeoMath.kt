@@ -13,6 +13,9 @@ object GeoMath {
         val a = sin(dLat / 2) * sin(dLat / 2) +
             cos(Math.toRadians(lat1)) * cos(Math.toRadians(lat2)) *
             sin(dLon / 2) * sin(dLon / 2)
-        return Constants.EARTH_RADIUS_M * 2 * atan2(sqrt(a), sqrt(1 - a))
+        // Floating error can push `a` slightly over 1 for near-antipodal inputs,
+        // making sqrt(1 - a) NaN; clamp to the valid domain.
+        val aClamped = a.coerceIn(0.0, 1.0)
+        return Constants.EARTH_RADIUS_M * 2 * atan2(sqrt(aClamped), sqrt(1 - aClamped))
     }
 }

@@ -147,4 +147,39 @@ class RunAccumulatorTest {
         // 40 s later with no new movement: window is empty → current pace undefined
         assertNull(acc.snapshot(50_000).currentPaceSecPerKm)
     }
+
+    @Test fun jitterWithNoDeviceSpeedReadsAsStationary() {
+        val acc = RunAccumulator()
+        // ~1 m of latitude near the equator.
+        val m = 0.000009
+        // Stand still while GPS jitters ±0.7 m about a fixed point at 1 Hz. Every
+        // consecutive step is ~1.4 m (> MIN_DUP_M, so the dedup gate can't hide it),
+        // but net displacement over any trailing window is ≈ 0. speed = null forces
+        // the windowed dist/dt path, which must average the jitter toward zero.
+        val offsets = listOf(-0.7, 0.7, -0.7, 0.7, -0.7, 0.7, -0.7)
+        offsets.forEachIndexed { i, o ->
+            acc.update(fix(o * m, t = i * 1000L, speed = null))
+        }
+        val s = acc.snapshot(6000)
+        // Instantaneous logic would bank every ~1.4 m jitter step (~8 m); windowed
+        // logic keeps it tiny (only the first sample or two before the window fills).
+        assertTrue("distance should stay small, was ${s.distanceMeters}", s.distanceMeters < 4.0)
+        assertTrue("moving time should stay small, was ${s.movingTimeMs}", s.movingTimeMs <= 2000L)
+    }
+
+    @Test fun currentPaceDoesNotSpanSegmentBreak() {
+        val acc = RunAccumulator()
+        // Pre-break moving segment (~6 m in 1 s), little distance.
+        acc.update(fix(0.0, t = 0))
+        acc.update(fix(stepLat * 2, t = 1000))
+        // >5 s gap with a far jump → segment break (no distance bridged).
+        acc.update(fix(stepLat * 30, t = 8000))
+        // Post-break segment at a known 3 m/s (~333 s/km), 4 fixes 3 m apart at 1 Hz.
+        for (i in 1..4) acc.update(fix(stepLat * 30 + stepLat * i, t = 8000L + i * 1000L))
+        // The whole sequence is inside the 20 s window. Pace must reflect ONLY the
+        // post-break 3 m/s segment (~333), not the inflated value (~666) you get when
+        // the dead time of the gap is counted against post-break distance alone.
+        val pace = acc.snapshot(12_000).currentPaceSecPerKm!!
+        assertEquals(333.0, pace, 30.0)
+    }
 }

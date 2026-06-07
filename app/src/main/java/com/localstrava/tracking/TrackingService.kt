@@ -23,6 +23,7 @@ import com.localstrava.metrics.Fix
 import com.localstrava.metrics.RunAccumulator
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.cancel
@@ -30,7 +31,10 @@ import kotlinx.coroutines.launch
 
 class TrackingService : Service() {
 
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    // limitedParallelism(1) serializes all DB writes FIFO so the STOP finalize can't be
+    // overtaken by a late incremental flush (which would re-null endedAt). See spec / fix note.
+    @OptIn(ExperimentalCoroutinesApi::class)
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO.limitedParallelism(1))
     private lateinit var repo: ActivityRepository
     private lateinit var locationSource: LocationSource
 
@@ -162,13 +166,12 @@ class TrackingService : Service() {
         lastFlushMs = nowMs
         val batch = ArrayList(buffer)
         buffer.clear()
-        val started = startedAtMs
         val stats = accumulator.snapshot(nowMs)
         val job = startJob ?: return
         scope.launch {
             val id = job.await()
             repo.appendPoints(batch.map { it.toEntity(id) })
-            repo.updateProgress(id, started, stats)
+            repo.updateProgress(id, stats)
         }
     }
 

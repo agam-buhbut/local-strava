@@ -12,6 +12,17 @@ interface RunDao {
     @Update suspend fun updateActivity(activity: Activity)
     @Insert suspend fun insertPoints(points: List<TrackPoint>)
 
+    @Query(
+        "UPDATE activities SET movingTimeMs = :movingTimeMs, " +
+            "distanceMeters = :distanceMeters, elevationGainMeters = :elevationGainMeters WHERE id = :id"
+    )
+    suspend fun updateProgress(
+        id: Long,
+        movingTimeMs: Long,
+        distanceMeters: Double,
+        elevationGainMeters: Double,
+    )
+
     @Query("SELECT * FROM activities WHERE id = :id")
     suspend fun getActivity(id: Long): Activity?
 

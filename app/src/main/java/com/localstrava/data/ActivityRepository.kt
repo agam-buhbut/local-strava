@@ -26,11 +26,9 @@ class ActivityRepository(private val dao: RunDao) {
         if (points.isNotEmpty()) dao.insertPoints(points)
     }
 
-    /** Keep the in-progress summary fresh (called on each flush). */
-    suspend fun updateProgress(id: Long, startedAtEpochMs: Long, stats: RunStats) {
-        dao.updateActivity(
-            Activity(id, startedAtEpochMs, null, stats.movingTimeMs, stats.distanceMeters, stats.elevationGainMeters)
-        )
+    /** Keep the in-progress summary fresh (called on each flush). Never touches endedAt. */
+    suspend fun updateProgress(id: Long, stats: RunStats) {
+        dao.updateProgress(id, stats.movingTimeMs, stats.distanceMeters, stats.elevationGainMeters)
     }
 
     suspend fun finalizeActivity(id: Long, startedAtEpochMs: Long, endedAtEpochMs: Long, stats: RunStats) {

@@ -24,9 +24,9 @@ import com.localstrava.metrics.RunAccumulator
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.runBlocking
 
 class TrackingService : Service() {
 
@@ -35,7 +35,7 @@ class TrackingService : Service() {
     private lateinit var locationSource: LocationSource
 
     private val accumulator = RunAccumulator()
-    private var activityId: Long = 0L
+    private var startJob: kotlinx.coroutines.Deferred<Long>? = null
     private var startedAtMs: Long = 0L
     private val buffer = ArrayList<AcceptedPoint>()
     private var lastFlushMs: Long = 0L
@@ -62,10 +62,11 @@ class TrackingService : Service() {
         if (TrackingStateHolder.state.value.isActive) return // idempotent
         startedAtMs = System.currentTimeMillis()
         lastFlushMs = startedAtMs
+        lastNotifiedHundredM = -1
         // startForeground must be the FIRST real action (FGS start window, spec §6).
         startForegroundCompat(buildNotification(paused = false, lost = false))
         TrackingStateHolder.set(TrackingUiState(phase = TrackPhase.Active))
-        scope.launch { activityId = repo.startActivity(startedAtMs) }
+        startJob = scope.async { repo.startActivity(startedAtMs) }
         locationSource.start()
     }
 
@@ -89,13 +90,16 @@ class TrackingService : Service() {
         locationSource.stop()
         val endedAt = System.currentTimeMillis()
         val stats = accumulator.snapshot(endedAt)
-        val id = activityId
+        val tail = ArrayList(buffer) // copy on the main thread (buffer is main-thread-only)
+        buffer.clear()
         val started = startedAtMs
         val tooShort = stats.pointCount < Constants.MIN_SAVE_POINTS ||
             stats.distanceMeters < Constants.MIN_SAVE_M
+        val job = startJob
         scope.launch {
-            flushBufferLocked(id)
+            val id = job?.await() ?: 0L
             if (id != 0L) {
+                repo.appendPoints(tail.map { it.toEntity(id) })
                 if (tooShort) repo.delete(id) else repo.finalizeActivity(id, started, endedAt, stats)
             }
             TrackingStateHolder.set(
@@ -108,6 +112,14 @@ class TrackingService : Service() {
     }
 
     private fun onFix(fix: Fix) {
+        // A fix means location is working again — clear any "GPS lost" state.
+        if (TrackingStateHolder.state.value.locationLost) {
+            TrackingStateHolder.update { it.copy(locationLost = false) }
+            pushNotification(
+                paused = TrackingStateHolder.state.value.phase == TrackPhase.Paused,
+                lost = false,
+            )
+        }
         val accepted = accumulator.update(fix)
         if (accepted != null) buffer.add(accepted)
         publishStats(fix.timeMs)
@@ -115,10 +127,13 @@ class TrackingService : Service() {
     }
 
     private fun onLocationLost() {
-        if (TrackingStateHolder.state.value.phase == TrackPhase.Active) {
-            accumulator.setManualPaused(true) // auto-pause; stats preserved
+        // GPS/provider turned off mid-run. Do NOT pause the accumulator: its gap logic
+        // (MAX_FIX_GAP_MS) makes a clean segment break for the dead interval and moving time
+        // naturally stops (no fixes arrive). Just surface the state; onFix clears it on return.
+        val phase = TrackingStateHolder.state.value.phase
+        if (phase == TrackPhase.Active || phase == TrackPhase.Paused) {
             TrackingStateHolder.update { it.copy(locationLost = true) }
-            pushNotification(paused = true, lost = true)
+            pushNotification(paused = phase == TrackPhase.Paused, lost = true)
         }
     }
 
@@ -145,23 +160,15 @@ class TrackingService : Service() {
     private fun maybeFlush(nowMs: Long) {
         if (nowMs - lastFlushMs < FLUSH_INTERVAL_MS || buffer.isEmpty()) return
         lastFlushMs = nowMs
-        val id = activityId
-        val started = startedAtMs
-        val stats = accumulator.snapshot(nowMs)
         val batch = ArrayList(buffer)
         buffer.clear()
+        val started = startedAtMs
+        val stats = accumulator.snapshot(nowMs)
+        val job = startJob ?: return
         scope.launch {
-            if (id != 0L) {
-                repo.appendPoints(batch.map { it.toEntity(id) })
-                repo.updateProgress(id, started, stats)
-            }
-        }
-    }
-
-    private suspend fun flushBufferLocked(id: Long) {
-        if (id != 0L && buffer.isNotEmpty()) {
-            repo.appendPoints(buffer.map { it.toEntity(id) })
-            buffer.clear()
+            val id = job.await()
+            repo.appendPoints(batch.map { it.toEntity(id) })
+            repo.updateProgress(id, started, stats)
         }
     }
 
@@ -179,8 +186,8 @@ class TrackingService : Service() {
     private fun buildNotification(paused: Boolean, lost: Boolean): Notification {
         val s = TrackingStateHolder.state.value
         val title = when {
-            lost -> "Location off — paused"
             paused -> "Run paused"
+            lost -> "Recording — GPS signal lost"
             else -> "Recording run"
         }
         val text = "${Format.distance(s.distanceMeters)} · ${Format.duration(s.movingTimeMs)}"
@@ -223,11 +230,8 @@ class TrackingService : Service() {
     }
 
     override fun onDestroy() {
-        val id = activityId
-        if (id != 0L && buffer.isNotEmpty()) {
-            runBlocking { repo.appendPoints(buffer.map { it.toEntity(id) }) }
-            buffer.clear()
-        }
+        // Durability is covered by incremental flush + STOP flush + recoverInProgress();
+        // do not block the main thread on a DB write here.
         scope.cancel()
         super.onDestroy()
     }

@@ -30,8 +30,9 @@
 1. A time goal while paused or auto-paused must not fire: it compares against *moving* time. Pinned in Task 2 (`timeUsesMovingTimeNotDistance`).
 2. The goal fires exactly once, including when the value is hit exactly (`>=`). Pinned in Task 2 (`*ReachedAtExactlyGoal`), and the once-only flag in Task 3, step 2.
 3. Log form input with a decimal comma (`8,25`, Samsung keyboard in many locales), blanks, zero, or 60 minutes or seconds. Pinned in Task 6 (`LogRunInputTest`).
-4. The lock-screen flag must clear the moment the run ends or the Record screen is left. Otherwise the app shows over the lock screen for good. Pinned in Task 4, step 3, by keying the effect on `isActive` with an `onDispose` that clears it, plus checklist item 4.
-5. Offline with no cached tiles: the map must show plain dark background and the route, not a grey grid. Pinned in Task 7, step 2, plus checklist item 6.
+4. The lock-screen flag must clear the moment the run ends (even if it was stopped while the screen was off) or the Record screen is left (no 700 ms fade window). Otherwise History or Detail shows over the lock screen. Pinned in Task 4, step 3, by one never-paused collector in `AppNav` (not a per-screen effect), plus checklist item 4.
+5. Offline with no cached tiles: the map must show plain dark background and the route, not a grey or (once inverted) cream grid. Pinned in Task 7, step 2, plus checklist item 6.
+6. Picking a date in the log form must store that local day and time, not midnight UTC plus the hours (west of UTC that lands on the wrong day). Pinned in Task 6 (`loggedStartMs` tests).
 
 ---
 
@@ -108,7 +109,7 @@ class GoalFormatTest {
 ```
 
 - [ ] **Step 2: Run them and confirm they fail.** `./gradlew testDebugUnitTest --tests '*Goal*'` should fail with unresolved references.
-- [ ] **Step 3: Implement `Goal.kt` and the four `Format` functions.** Remaining distance reuses `Format.distance`. Remaining time is `ceil` minutes when 60 s or more is left, otherwise whole seconds. `paceShort` shares its maths with `pace` (have `pace` call it and append ` /km`). Use `Locale.US` like the rest of `Format`.
+- [ ] **Step 3: Implement `Goal.kt` and the four `Format` functions.** Remaining distance reuses `Format.distance`. Remaining time is `ceil` minutes when 60 s or more is left, otherwise whole seconds. `paceShort` shares its maths with `pace`: `pace` calls it and appends ` /km` **only when the result isn't `--`**, so the existing `FormatTest.paceNullShowsDashes` keeps passing. Use `Locale.US` like the rest of `Format`.
 - [ ] **Step 4: Run the tests.** `./gradlew testDebugUnitTest` should pass: 39 existing tests plus the new ones.
 - [ ] **Step 5: Commit** `feat(metrics): goal model and goal/number formatting`
 
@@ -122,7 +123,7 @@ class GoalFormatTest {
 - Consumes: `Goal`, `Goal.isReached` (Task 2).
 - Produces: `TrackingUiState.goal: Goal? = null`, `TrackingUiState.goalReached: Boolean = false`, `TrackingService.start(context: Context, goal: Goal?)` (replaces `start(context)`), `class GoalBell(context: Context) { fun ring(); fun release() }`.
 
-- [ ] **Step 1: Write `GoalBell`.** It plays `RingtoneManager.getDefaultUri(TYPE_ALARM)`, falling back to `TYPE_NOTIFICATION` when null. Use `AudioAttributes` `USAGE_ALARM` / `CONTENT_TYPE_SONIFICATION`, so it's heard on silent. Stop it after 4 000 ms through a main-Looper `Handler`. Vibrate the waveform `[0, 600, 300, 600, 300, 600]` (no repeat), using `VibratorManager` on API 31+ and `Vibrator` below. `release()` stops any playing tone and removes pending callbacks.
+- [ ] **Step 1: Write `GoalBell`.** The service creates it in `onCreate` (a `lateinit` like `repo`; not a field initialiser, since the context isn't attached yet). `ring()` fetches the ringtone itself, so nothing is prepared until the goal is hit. It plays `RingtoneManager.getDefaultUri(TYPE_ALARM)`, falling back to `TYPE_NOTIFICATION` when null. Use `AudioAttributes` `USAGE_ALARM` / `CONTENT_TYPE_SONIFICATION`, so it's heard on silent. Stop it after 4 000 ms through a main-Looper `Handler`. Vibrate the waveform `[0, 600, 300, 600, 300, 600]` (no repeat), using `VibratorManager` on API 31+ and `Vibrator` below, with alarm usage (`VibrationAttributes.USAGE_ALARM` on API 33+, alarm `AudioAttributes` below), so One UI's mute mode doesn't drop it. `release()` stops any playing tone and removes pending callbacks.
 - [ ] **Step 2: Wire the goal into the service.** Send it as START extras: `EXTRA_GOAL_DISTANCE_M` (Double) or `EXTRA_GOAL_TIME_MS` (Long), with neither meaning no goal. `handleStart` reads them into `TrackingUiState(phase = Active, goal = …)`. In `publishStats`, after the state update: if `goal != null && !goalReached && goal.isReached(s.distanceMeters, s.movingTimeMs)`, set `goalReached = true` in state and call `bell.ring()`. Call `bell.release()` in `onDestroy`. Leave everything else in the service as is.
 - [ ] **Step 3: Update the one caller.** In `RecordScreen.kt`, each `TrackingService.start(context)` call site temporarily becomes `start(context, null)`. Task 4 passes the real goal.
 - [ ] **Step 4: Verify.** Run `./gradlew assembleDebug testDebugUnitTest` and expect `BUILD SUCCESSFUL`.
@@ -131,17 +132,18 @@ class GoalFormatTest {
 ### Task 4: Record screen redesign, hold-to-stop, lock-screen view
 
 **Files:**
-- Modify: `app/src/main/java/com/localstrava/ui/record/RecordScreen.kt` (keeps permission, battery and back flows; picks Ready or Running content; lock-screen effect)
+- Modify: `app/src/main/java/com/localstrava/ui/record/RecordScreen.kt` (keeps permission, battery and back flows; picks Ready or Running content)
 - Create: `app/src/main/java/com/localstrava/ui/record/ReadyContent.kt` (mockup screen 1)
 - Create: `app/src/main/java/com/localstrava/ui/record/RunningContent.kt` (mockup screen 2, including `HoldToStopButton`)
+- Modify: `app/src/main/java/com/localstrava/ui/nav/AppNav.kt` (owns the lock-screen flag)
 
 **Interfaces:**
 - Consumes: `RunColors`, `Numbers` (Task 1); `Goal`, `stepped`, `progress`, `Format.km`, `Format.paceShort`, `Format.goal`, `Format.goalStatus` (Task 2); `TrackingService.start(context, goal)`, `TrackingUiState.goal` and `goalReached` (Task 3).
 - Produces: none used later.
 
-- [ ] **Step 1: Ready content** (shown when not `isActive`). There's no top app bar. Title "Ready to run". Then the label "Ring me at" over a three-way Off / Distance / Time toggle and a −/+ stepper around the big value (`Format.goal`, with the unit in mist). Under it: "Rings and vibrates once, even in your pocket." It is hidden when Off. At the bottom: the existing Samsung tip (same condition as now), then a full-width amber "Start run" button. The location-permission hint keeps its current text and Open settings button, restyled on the surface colour. Remember the choice in the existing `"record"` SharedPreferences: `goal_kind` (`off` / `distance` / `time`), `goal_distance_m` (default 5000.0), and `goal_time_ms` (default 1 800 000). Each kind keeps its own value. Start passes `Goal?` through the existing `startRun()` into `TrackingService.start`.
-- [ ] **Step 2: Running content** (shown when `isActive`). Top row: an amber dot with "Recording" ("Paused" when paused) on the left. On the right, "GPS on" in mist, or "GPS lost" in amber when `locationLost`. Then the label "Distance" over `Format.km` at about 128 sp, Numbers 700, with "km" in mist. If there's a goal: a 6 dp amber bar (`progress`) and `Format.goalStatus` under it. Then "Time" over `Format.duration` at about 76 sp. Then three columns "Pace now" / "Average" / "Climb" (`paceShort` ×2, `Format.elevation`). At the bottom, side by side: Pause as an outlined button ("Resume" in amber fill when paused), and `HoldToStopButton`. Leave the dot's pulse out unless it's trivial.
-- [ ] **Step 3: Lock-screen view.** In `RecordScreen`, use `DisposableEffect(state.isActive) { activity.setShowOverLock(state.isActive); onDispose { activity.setShowOverLock(false) } }`. Write a private `Activity.setShowOverLock(show: Boolean)`: `setShowWhenLocked(show)` on API 27+, otherwise add or clear `WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED` (deprecated, needed only on API 26: `@Suppress` with a one-line why). Get the activity by unwrapping `LocalContext.current` through `ContextWrapper`. Never call `setTurnScreenOn` or `requestDismissKeyguard`.
+- [ ] **Step 1: Ready content** (shown when not `isActive`). There's no top app bar. Title "Ready to run". Then the label "Ring me at" over a three-way Off / Distance / Time toggle and a −/+ stepper around the big value (`Format.goal`, with the unit in mist). Under it: "Rings and vibrates once, even in your pocket." It is hidden when Off. At the bottom: the existing Samsung tip (same condition as now), then a full-width amber "Start run" button. The location-permission hint keeps its current text and Open settings button, restyled on the surface colour. Remember the choice in the existing `"record"` SharedPreferences: `goal_kind` (`off` / `distance` / `time`), `goal_distance_m` (default 5000.0), and `goal_time_ms` (default 1 800 000). Each kind keeps its own value. A private `goalFromPrefs(): Goal?` is read at start time, and **all three** `TrackingService.start` call sites pass it, including the `batteryLauncher` callback, which sits outside `startRun()`.
+- [ ] **Step 2: Running content** (shown when `isActive`). Top row: an amber dot with "Recording" ("Paused" when paused) on the left. On the right, "GPS on" in mist, or "GPS lost" in amber when `locationLost`. Then the label "Distance" over `Format.km` at about 128 sp, Numbers 700, with "km" in mist. If there's a goal: a 6 dp amber bar (`progress`) and `Format.goalStatus` under it. Then "Time" over `Format.duration` at about 76 sp. Then three columns "Pace now" / "Average" / "Climb" (`paceShort` ×2, `Format.elevation`). At the bottom, side by side: Pause as an outlined button ("Resume" in amber fill when paused), and `HoldToStopButton`. The dot is static. There's no endless animation on the Running screen: it would keep the 120 Hz panel redrawing whenever the screen is lit, including every glance over the lock screen.
+- [ ] **Step 3: Lock-screen view, owned by `AppNav` only** (no per-screen effect). In `AppNav`: `LaunchedEffect(nav) { combine(nav.currentBackStackEntryFlow.map { it.destination.route == Routes.RECORD }, TrackingStateHolder.state.map { it.isActive }) { onRecord, active -> onRecord && active }.distinctUntilChanged().collect { activity.setShowOverLock(it) } }`. This collector isn't lifecycle-gated, so a run stopped while the screen is off clears the flag at once, and Back clears it on navigation, not after the 700 ms fade. Write a private `Activity.setShowOverLock(show: Boolean)` in `AppNav.kt`: `setShowWhenLocked(show)` on API 27+, otherwise add or clear `WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED` (deprecated, needed only on API 26: `@Suppress` with a one-line why). Get the activity by unwrapping `LocalContext.current` through `ContextWrapper`. Never call `setTurnScreenOn` or `requestDismissKeyguard`.
 - [ ] **Step 4: `HoldToStopButton(onStop: () -> Unit)`.** A surface-coloured 60 dp button labelled "Hold to stop". While pressed, an amber fill animates left to right over 1 200 ms (`Animatable`, linear), and the label switches to ink. Releasing early snaps the fill back with no stop. Reaching full calls `onStop` once. Use `pointerInput` + `detectTapGestures(onPress = { … tryAwaitRelease() })`. For accessibility, add `semantics { onClick(label = "Stop run") { onStop(); true } }`, so TalkBack users can stop with a double tap.
 - [ ] **Step 5: Verify.** Run `./gradlew assembleDebug testDebugUnitTest` and expect `BUILD SUCCESSFUL`.
 - [ ] **Step 6: Commit** `feat(ui): dark record screen with goal picker, hold-to-stop and lock-screen view`
@@ -182,7 +184,8 @@ val MIGRATION_1_2 = object : Migration(1, 2) {
 ```
 
 `finalizeActivity` and `recoverInProgress` need no change: the defaults and `copy` keep both fields right.
-- [ ] **Step 4: Verify.** Run `./gradlew assembleDebug testDebugUnitTest`. Expect `BUILD SUCCESSFUL`, and expect Room's KSP step to accept the schema.
+Don't put any `defaultValue` on `note`: `"NULL"` would fail Room's post-migration check. Keep `versionCode = 1`. If the upgrade ever crashes at launch, Room rolls back to v1, and a build from `733ecbf` installs over it without a downgrade.
+- [ ] **Step 4: Verify.** Run `./gradlew assembleDebug testDebugUnitTest` and expect `BUILD SUCCESSFUL`. This does **not** prove the migration: KSP never sees migrations. The first real check is launching on the S24 over the existing install (checklist item 1).
 - [ ] **Step 5: Commit** `feat(data): logged runs (db v2 with additive migration)`
 
 ### Task 6: Log a run screen and History redesign
@@ -194,7 +197,7 @@ val MIGRATION_1_2 = object : Migration(1, 2) {
 
 **Interfaces:**
 - Consumes: `logRun` (Task 5), `Format.km` (Task 2), `Format.avgPace`, `Format.duration`, theme (Task 1).
-- Produces: `fun parseDistanceMeters(text: String): Double?` (km in, metres out, accepts `.` or `,`, trims, null if blank, garbage, ≤ 0 or > 1000 km), `fun parseDurationMs(hours: String, minutes: String, seconds: String): Long?` (blank counts as 0, hours 0–99, minutes and seconds 0–59, null if any is out of range or the total is 0).
+- Produces: `fun parseDistanceMeters(text: String): Double?` (km in, metres out, accepts `.` or `,`, trims, null if blank, garbage, ≤ 0 or > 1000 km), `fun parseDurationMs(hours: String, minutes: String, seconds: String): Long?` (blank counts as 0, hours 0–99, minutes and seconds 0–59, null if any is out of range or the total is 0), `fun loggedStartMs(utcDateMs: Long, hour: Int, minute: Int, zone: ZoneId): Long` (reads the picker's date as a UTC date, then combines it with the local time in `zone`).
 
 - [ ] **Step 1: Write the failing test**
 
@@ -214,13 +217,21 @@ class LogRunInputTest {
     @Test fun durationMinutes60() = assertNull(parseDurationMs("0", "60", "0"))
     @Test fun durationSeconds60() = assertNull(parseDurationMs("0", "1", "60"))
     @Test fun durationNegative() = assertNull(parseDurationMs("-1", "0", "0"))
+
+    private val nov3Utc = LocalDate.of(2026, 11, 3).atStartOfDay(ZoneOffset.UTC).toInstant().toEpochMilli()
+    private fun local(zone: String) =
+        ZonedDateTime.of(2026, 11, 3, 18, 30, 0, 0, ZoneId.of(zone)).toInstant().toEpochMilli()
+    @Test fun startEastOfUtc() =
+        assertEquals(local("Asia/Jerusalem"), loggedStartMs(nov3Utc, 18, 30, ZoneId.of("Asia/Jerusalem")))
+    @Test fun startWestOfUtcKeepsTheDay() =
+        assertEquals(local("America/Los_Angeles"), loggedStartMs(nov3Utc, 18, 30, ZoneId.of("America/Los_Angeles")))
 }
 ```
 
 - [ ] **Step 2: Run it and confirm it fails.** `./gradlew testDebugUnitTest --tests '*LogRunInputTest'` should fail with unresolved reference.
 - [ ] **Step 3: Implement `LogRunInput.kt`**, then run step 2's command again and expect it to pass.
 - [ ] **Step 4: Build the Log a run screen** (mockup screen 5). The top bar has a Close icon (`Icons.Filled.Close`, pops back) and the title "Log a run". Fields:
-  - "When": tapping opens a Material 3 `DatePickerDialog`, then a `TimePicker` in an `AlertDialog`. Defaults to now. Shown as `EEE d MMM, HH:mm`.
+  - "When": tapping opens a Material 3 `DatePickerDialog`, then a `TimePicker` in an `AlertDialog`. Defaults to now. The stored start is `loggedStartMs(selectedDateMillis, hour, minute, ZoneId.systemDefault())`. Shown as `EEE d MMM, HH:mm`.
   - "Distance": decimal keyboard, with "km" suffix.
   - "Time": three number fields with h / m / s suffixes.
   - Under the time fields: "Pace **x:xx /km**" (`Format.avgPace`). Hidden until both are valid.
@@ -246,8 +257,8 @@ class LogRunInputTest {
 
 - [ ] **Step 1: Keep map tiles.** In `LocalStravaApp.configureOsmdroid`, the base dir becomes `File(filesDir, "osmdroid")` instead of `cacheDir`. Leave the size cap and user agent alone.
 - [ ] **Step 2: Dark map.** On the `MapView`:
-  - `overlayManager.tilesOverlay.setColorFilter(TilesOverlay.INVERTED_COLORS)`.
-  - `tilesOverlay.loadingBackgroundColor` and `loadingLineColor` set to ink, so missing tiles are plain dark.
+  - `overlayManager.tilesOverlay.setColorFilter(TilesOverlay.INVERT_COLORS)` (that's the real name; `INVERTED_COLORS` doesn't exist).
+  - `tilesOverlay.setLoadingBackgroundColor(Color.TRANSPARENT)` and `setLoadingLineColor(Color.TRANSPARENT)`, plus `mapView.setBackgroundColor(ink)`. osmdroid runs the loading placeholder through the same inversion, so an ink placeholder would show as cream. Transparent means missing tiles show the dark view background.
   - **Route:** each segment is drawn twice, an ink casing polyline about 9 dp wide, then an amber one about 4.5 dp wide, with round caps and joins. Keep the existing segment-break splitting.
   - **Start and end markers:** replace the default pins. The start is a small snow dot with an ink ring (`GradientDrawable` oval, anchored at the centre). The end marker is your choice, but keep it minimal.
 - [ ] **Step 3: Layout** (mockup screen 4).

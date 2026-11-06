@@ -1,5 +1,7 @@
 package com.localstrava.tracking
 
+import com.localstrava.metrics.Goal
+
 sealed interface TrackPhase {
     data object Idle : TrackPhase
     data object Active : TrackPhase
@@ -16,6 +18,8 @@ data class TrackingUiState(
     val elevationGainMeters: Double = 0.0,
     val currentPaceSecPerKm: Double? = null,
     val avgPaceSecPerKm: Double? = null,
+    val goal: Goal? = null,
+    val goalReached: Boolean = false,
 ) {
     val isActive: Boolean get() = phase is TrackPhase.Active || phase is TrackPhase.Paused
 }

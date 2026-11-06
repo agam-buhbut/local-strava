@@ -21,6 +21,8 @@ import com.localstrava.format.Format
 import com.localstrava.metrics.AcceptedPoint
 import com.localstrava.metrics.Constants
 import com.localstrava.metrics.Fix
+import com.localstrava.metrics.Goal
+import com.localstrava.metrics.isReached
 import com.localstrava.metrics.RunAccumulator
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Deferred
@@ -40,6 +42,7 @@ class TrackingService : Service() {
     private lateinit var repo: ActivityRepository
     private lateinit var locationSource: LocationSource
     private var barometerSource: BarometerSource? = null
+    private lateinit var bell: GoalBell
     private var wakeLock: PowerManager.WakeLock? = null
 
     private val accumulator = RunAccumulator()
@@ -52,12 +55,13 @@ class TrackingService : Service() {
     override fun onCreate() {
         super.onCreate()
         repo = ActivityRepository(RunDatabase.get(this).runDao())
+        bell = GoalBell(this)
         locationSource = LocationSourceFactory.create(this, ::onFix, ::onLocationLost)
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
-            ACTION_START -> handleStart()
+            ACTION_START -> handleStart(intent.goal())
             ACTION_PAUSE -> handlePause()
             ACTION_RESUME -> handleResume()
             ACTION_STOP -> handleStop()
@@ -66,14 +70,14 @@ class TrackingService : Service() {
         return START_NOT_STICKY
     }
 
-    private fun handleStart() {
+    private fun handleStart(goal: Goal?) {
         if (TrackingStateHolder.state.value.isActive) return // idempotent
         startedAtMs = System.currentTimeMillis()
         lastFlushMs = startedAtMs
         lastNotifiedHundredM = -1
         // startForeground must be the FIRST real action (FGS start window, spec §6).
         startForegroundCompat(buildNotification(paused = false, lost = false))
-        TrackingStateHolder.set(TrackingUiState(phase = TrackPhase.Active))
+        TrackingStateHolder.set(TrackingUiState(phase = TrackPhase.Active, goal = goal))
         acquireWakeLock()
         startJob = scope.async { repo.startActivity(startedAtMs) }
         locationSource.start()
@@ -172,6 +176,12 @@ class TrackingService : Service() {
                 currentPaceSecPerKm = s.currentPaceSecPerKm,
                 avgPaceSecPerKm = s.avgPaceSecPerKm,
             )
+        }
+        // Once per run: goalReached latches; the service is the state's only writer (main thread).
+        val st = TrackingStateHolder.state.value
+        if (st.goal != null && !st.goalReached && st.goal.isReached(s.distanceMeters, s.movingTimeMs)) {
+            TrackingStateHolder.update { it.copy(goalReached = true) }
+            bell.ring()
         }
         val hundredM = (s.distanceMeters / 100).toInt()
         if (hundredM != lastNotifiedHundredM) {
@@ -275,6 +285,7 @@ class TrackingService : Service() {
         if (::locationSource.isInitialized) locationSource.stop()
         barometerSource?.stop()
         releaseWakeLock()
+        if (::bell.isInitialized) bell.release()
         scope.cancel()
         super.onDestroy()
     }
@@ -286,6 +297,8 @@ class TrackingService : Service() {
         const val ACTION_PAUSE = "com.localstrava.action.PAUSE"
         const val ACTION_RESUME = "com.localstrava.action.RESUME"
         const val ACTION_STOP = "com.localstrava.action.STOP"
+        private const val EXTRA_GOAL_DISTANCE_M = "com.localstrava.extra.GOAL_DISTANCE_M"
+        private const val EXTRA_GOAL_TIME_MS = "com.localstrava.extra.GOAL_TIME_MS"
         private const val NOTIF_ID = 1
         private const val FLUSH_INTERVAL_MS = 10_000L
         private const val WAKE_LOCK_TAG = "LocalStrava:run"
@@ -293,9 +306,22 @@ class TrackingService : Service() {
         private const val WAKE_LOCK_TIMEOUT_MS = 12 * 60 * 60 * 1000L
 
         /** START must be called from a visible Activity with permissions already granted (spec §6). */
-        fun start(context: Context) = ContextCompat.startForegroundService(
-            context, Intent(context, TrackingService::class.java).setAction(ACTION_START),
+        fun start(context: Context, goal: Goal?) = ContextCompat.startForegroundService(
+            context,
+            Intent(context, TrackingService::class.java).setAction(ACTION_START).apply {
+                when (goal) {
+                    is Goal.Distance -> putExtra(EXTRA_GOAL_DISTANCE_M, goal.meters)
+                    is Goal.Time -> putExtra(EXTRA_GOAL_TIME_MS, goal.millis)
+                    null -> Unit
+                }
+            },
         )
+
+        private fun Intent.goal(): Goal? = when {
+            hasExtra(EXTRA_GOAL_DISTANCE_M) -> Goal.Distance(getDoubleExtra(EXTRA_GOAL_DISTANCE_M, 0.0))
+            hasExtra(EXTRA_GOAL_TIME_MS) -> Goal.Time(getLongExtra(EXTRA_GOAL_TIME_MS, 0L))
+            else -> null
+        }
         // PAUSE/RESUME/STOP are delivered to the already-running service (no FGS start contract).
         fun pause(context: Context) = deliver(context, ACTION_PAUSE)
         fun resume(context: Context) = deliver(context, ACTION_RESUME)

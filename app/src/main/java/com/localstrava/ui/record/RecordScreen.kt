@@ -93,7 +93,7 @@ fun RecordScreen(
     // The run starts whatever the answer: the exemption only helps screen-off reliability.
     val batteryLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.StartActivityForResult(),
-    ) { TrackingService.start(context) }
+    ) { TrackingService.start(context, null) }
 
     // Ask once to be exempt from battery optimization: Samsung freezes non-exempt apps with the
     // screen off, so a locked phone stopped recording despite the location FGS.
@@ -102,7 +102,7 @@ fun RecordScreen(
         if (powerManager.isIgnoringBatteryOptimizations(context.packageName) ||
             prefs.getBoolean(KEY_BATTERY_ASKED, false)
         ) {
-            TrackingService.start(context)
+            TrackingService.start(context, null)
             return
         }
         prefs.edit { putBoolean(KEY_BATTERY_ASKED, true) }
@@ -114,7 +114,7 @@ fun RecordScreen(
                 ),
             )
         } catch (e: ActivityNotFoundException) {
-            TrackingService.start(context) // ROM without the dialog: start anyway
+            TrackingService.start(context, null) // ROM without the dialog: start anyway
         }
     }
 

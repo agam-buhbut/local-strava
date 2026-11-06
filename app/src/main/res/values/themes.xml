@@ -1,4 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <style name="Theme.LocalStrava" parent="android:Theme.Material.NoActionBar" />
+    <style name="Theme.LocalStrava" parent="android:Theme.Material.NoActionBar">
+        <!-- Ink window so there's no white flash before Compose draws. -->
+        <item name="android:windowBackground">@color/ink</item>
+    </style>
 </resources>

@@ -165,6 +165,16 @@ when / distance / time / note, with pace worked out. Offline means "works with n
 pieces kept". The lock-screen view works like Waze. Always dark with no switch, and the
 mockup's look is approved. No performance work.
 
+Added 2026-11-06:
+- **Git:** the earlier uncommitted work is committed as a baseline (`b24edec` accuracy work,
+  `612adcb` screen-off fix). After that there is one commit per finished feature.
+  Commit messages never mention AI: no `Co-Authored-By` or similar trailers.
+- **Database upgrade safety:** careful additive migration only, with no test library and no
+  emulator. If the upgrade fails, Room rolls it back and the runs stay at version 1, so
+  reinstalling the previous APK works. Once the upgrade has succeeded, the previous APK can't
+  open the version-2 database. The runs are still in the file, and the fix goes forward, never
+  back. Never add any `fallbackToDestructiveMigration*`.
+
 ## 6. Checking it on the phone
 
 The S24 is not connected to the build machine, and no emulator is installed. So the plan ends

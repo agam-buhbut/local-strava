@@ -36,7 +36,7 @@ val BarlowCondensed = FontFamily(
 /** Big readouts: condensed, tabular digits so values don't wobble as they tick. Callers set size/weight. */
 val Numbers = TextStyle(fontFamily = BarlowCondensed, fontFeatureSettings = "tnum")
 
-private val colors = darkColorScheme(
+internal val RunColorScheme = darkColorScheme(
     primary = RunColors.Amber,
     onPrimary = RunColors.Ink,
     background = RunColors.Ink,
@@ -45,9 +45,27 @@ private val colors = darkColorScheme(
     onSurface = RunColors.Snow,
     surfaceVariant = RunColors.Surface,
     onSurfaceVariant = RunColors.Mist,
-    surfaceContainer = RunColors.Surface,
     outline = RunColors.Line,
     outlineVariant = RunColors.Line,
+    // Every role dialogs and the date/time pickers read, so Material's baseline purples never show.
+    primaryContainer = RunColors.Amber, // picker's selected hour/minute
+    onPrimaryContainer = RunColors.Ink,
+    secondary = RunColors.Mist,
+    onSecondary = RunColors.Ink,
+    secondaryContainer = RunColors.Line,
+    onSecondaryContainer = RunColors.Snow,
+    tertiary = RunColors.Mist,
+    onTertiary = RunColors.Ink,
+    tertiaryContainer = RunColors.Line, // AM/PM toggle
+    onTertiaryContainer = RunColors.Snow,
+    surfaceContainerLowest = RunColors.Ink,
+    surfaceContainerLow = RunColors.Surface,
+    surfaceContainer = RunColors.Surface,
+    surfaceContainerHigh = RunColors.Surface, // dialogs
+    surfaceContainerHighest = RunColors.Line,
+    surfaceBright = RunColors.Line,
+    surfaceDim = RunColors.Ink,
+    surfaceTint = RunColors.Ink, // no tonal-elevation tint
 )
 
 private val typography = Typography().run {
@@ -75,5 +93,5 @@ private val typography = Typography().run {
 /** Always dark (owner decision): ignores the system theme on purpose. */
 @Composable
 fun LocalStravaTheme(content: @Composable () -> Unit) {
-    MaterialTheme(colorScheme = colors, typography = typography, content = content)
+    MaterialTheme(colorScheme = RunColorScheme, typography = typography, content = content)
 }

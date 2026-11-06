@@ -16,6 +16,7 @@ import androidx.navigation.navArgument
 import com.localstrava.tracking.TrackingStateHolder
 import com.localstrava.ui.detail.DetailScreen
 import com.localstrava.ui.history.HistoryScreen
+import com.localstrava.ui.log.LogRunScreen
 import com.localstrava.ui.record.RecordScreen
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
@@ -24,6 +25,7 @@ import kotlinx.coroutines.flow.map
 object Routes {
     const val HISTORY = "history"
     const val RECORD = "record"
+    const val LOG = "log"
     const val DETAIL_ARG = "id"
     const val DETAIL_PATTERN = "detail/{id}"
     fun detail(id: Long) = "detail/$id"
@@ -51,6 +53,7 @@ fun AppNav() {
         composable(Routes.HISTORY) {
             HistoryScreen(
                 onStartRun = { nav.navigate(Routes.RECORD) },
+                onLogRun = { nav.navigate(Routes.LOG) },
                 onOpenRun = { id -> nav.navigate(Routes.detail(id)) },
             )
         }
@@ -61,6 +64,7 @@ fun AppNav() {
                 onExitToHistory = { nav.popBackStack(Routes.HISTORY, inclusive = false) },
             )
         }
+        composable(Routes.LOG) { LogRunScreen(onDone = { nav.popBackStack() }) }
         composable(
             route = Routes.DETAIL_PATTERN,
             arguments = listOf(navArgument(Routes.DETAIL_ARG) { type = NavType.LongType }),

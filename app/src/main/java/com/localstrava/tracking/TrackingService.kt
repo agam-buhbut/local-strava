@@ -9,6 +9,7 @@ import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.IBinder
+import android.os.PowerManager
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import com.localstrava.LocalStravaApp
@@ -39,6 +40,7 @@ class TrackingService : Service() {
     private lateinit var repo: ActivityRepository
     private lateinit var locationSource: LocationSource
     private var barometerSource: BarometerSource? = null
+    private var wakeLock: PowerManager.WakeLock? = null
 
     private val accumulator = RunAccumulator()
     private var startJob: Deferred<Long>? = null
@@ -72,6 +74,7 @@ class TrackingService : Service() {
         // startForeground must be the FIRST real action (FGS start window, spec §6).
         startForegroundCompat(buildNotification(paused = false, lost = false))
         TrackingStateHolder.set(TrackingUiState(phase = TrackPhase.Active))
+        acquireWakeLock()
         startJob = scope.async { repo.startActivity(startedAtMs) }
         locationSource.start()
         BarometerSource(this, ::onBarometerAltitude, ::onBarometerUnavailable).also {
@@ -99,6 +102,7 @@ class TrackingService : Service() {
         if (phase != TrackPhase.Active && phase != TrackPhase.Paused) return
         locationSource.stop()
         barometerSource?.stop() // synchronous, main thread — not inside scope.launch
+        releaseWakeLock()
         val endedAt = System.currentTimeMillis()
         val stats = accumulator.snapshot(endedAt)
         val tail = ArrayList(buffer) // copy on the main thread (buffer is main-thread-only)
@@ -235,6 +239,21 @@ class TrackingService : Service() {
         )
     }
 
+    // Samsung's battery management freezes/throttles the app with the screen off despite the
+    // location FGS, so no fixes arrive while locked. A partial wake lock keeps the CPU up for
+    // the whole run. Main-thread only, like the rest of the service state.
+    private fun acquireWakeLock() {
+        if (wakeLock?.isHeld == true) return
+        wakeLock = getSystemService(PowerManager::class.java)
+            .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, WAKE_LOCK_TAG)
+            .apply { acquire(WAKE_LOCK_TIMEOUT_MS) }
+    }
+
+    private fun releaseWakeLock() {
+        wakeLock?.let { if (it.isHeld) it.release() }
+        wakeLock = null
+    }
+
     private fun pushNotification(paused: Boolean, lost: Boolean) {
         getSystemService(NotificationManager::class.java)
             .notify(NOTIF_ID, buildNotification(paused, lost))
@@ -255,6 +274,7 @@ class TrackingService : Service() {
         // (a leaked FLP callback would keep requesting at 1 Hz). Idempotent with handleStop().
         if (::locationSource.isInitialized) locationSource.stop()
         barometerSource?.stop()
+        releaseWakeLock()
         scope.cancel()
         super.onDestroy()
     }
@@ -268,6 +288,9 @@ class TrackingService : Service() {
         const val ACTION_STOP = "com.localstrava.action.STOP"
         private const val NOTIF_ID = 1
         private const val FLUSH_INTERVAL_MS = 10_000L
+        private const val WAKE_LOCK_TAG = "LocalStrava:run"
+        // Leak safety net only: handleStop()/onDestroy() release it long before this in practice.
+        private const val WAKE_LOCK_TIMEOUT_MS = 12 * 60 * 60 * 1000L
 
         /** START must be called from a visible Activity with permissions already granted (spec §6). */
         fun start(context: Context) = ContextCompat.startForegroundService(

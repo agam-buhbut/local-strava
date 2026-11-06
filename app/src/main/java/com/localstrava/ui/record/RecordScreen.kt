@@ -1,10 +1,13 @@
 package com.localstrava.ui.record
 
 import android.Manifest
+import android.content.ActivityNotFoundException
+import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
+import android.os.PowerManager
 import android.provider.Settings
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -37,6 +40,8 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
+import androidx.core.content.edit
+import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.localstrava.format.Format
 import com.localstrava.tracking.TrackPhase
@@ -75,13 +80,51 @@ fun RecordScreen(
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) add(Manifest.permission.POST_NOTIFICATIONS)
     }.toTypedArray()
 
+    val powerManager = remember { context.getSystemService(PowerManager::class.java) }
+    var batteryExempt by remember {
+        mutableStateOf(powerManager.isIgnoringBatteryOptimizations(context.packageName))
+    }
+    // Re-check on return from the system dialog or Settings.
+    LifecycleResumeEffect(Unit) {
+        batteryExempt = powerManager.isIgnoringBatteryOptimizations(context.packageName)
+        onPauseOrDispose { }
+    }
+
+    // The run starts whatever the answer: the exemption only helps screen-off reliability.
+    val batteryLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartActivityForResult(),
+    ) { TrackingService.start(context) }
+
+    // Ask once to be exempt from battery optimization: Samsung freezes non-exempt apps with the
+    // screen off, so a locked phone stopped recording despite the location FGS.
+    fun startRun() {
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        if (powerManager.isIgnoringBatteryOptimizations(context.packageName) ||
+            prefs.getBoolean(KEY_BATTERY_ASKED, false)
+        ) {
+            TrackingService.start(context)
+            return
+        }
+        prefs.edit { putBoolean(KEY_BATTERY_ASKED, true) }
+        try {
+            batteryLauncher.launch(
+                Intent(
+                    Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
+                    Uri.fromParts("package", context.packageName, null),
+                ),
+            )
+        } catch (e: ActivityNotFoundException) {
+            TrackingService.start(context) // ROM without the dialog: start anyway
+        }
+    }
+
     val launcher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions(),
     ) { result ->
         val fine = result[Manifest.permission.ACCESS_FINE_LOCATION] == true ||
             ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) ==
             PackageManager.PERMISSION_GRANTED
-        if (fine) { showSettingsHint = false; TrackingService.start(context) } else { showSettingsHint = true }
+        if (fine) { showSettingsHint = false; startRun() } else { showSettingsHint = true }
         // notification denial is non-fatal (spec §8)
     }
 
@@ -90,7 +133,7 @@ fun RecordScreen(
             context, Manifest.permission.ACCESS_FINE_LOCATION,
         ) == PackageManager.PERMISSION_GRANTED
         if (fine) {
-            TrackingService.start(context)
+            startRun()
         } else {
             showSettingsHint = false
             launcher.launch(perms)
@@ -144,6 +187,15 @@ fun RecordScreen(
                 SmallStat("Elev", Format.elevation(state.elevationGainMeters))
             }
             Spacer(Modifier.weight(1f))
+            if (!batteryExempt && !state.isActive) {
+                Text(
+                    "Samsung: also add this app to Settings › Battery › " +
+                        "Background usage limits › Never sleeping apps.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    textAlign = TextAlign.Center,
+                )
+            }
             Controls(
                 state,
                 onStart = ::onStartClicked,
@@ -188,3 +240,6 @@ private fun SmallStat(label: String, value: String) {
         Text(value, style = MaterialTheme.typography.titleMedium)
     }
 }
+
+private const val PREFS_NAME = "record"
+private const val KEY_BATTERY_ASKED = "battery_optimization_asked"

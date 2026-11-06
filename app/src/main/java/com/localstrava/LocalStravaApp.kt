@@ -30,7 +30,9 @@ class LocalStravaApp : Application() {
         val conf = Configuration.getInstance()
         conf.load(this, getSharedPreferences("osmdroid", Context.MODE_PRIVATE))
         conf.userAgentValue = packageName
-        val base = File(cacheDir, "osmdroid")
+        // filesDir, not cacheDir: Android may wipe the cache, and seen map areas must stay
+        // available offline (spec §4.4). osmdroid still caps the tile cache size itself.
+        val base = File(filesDir, "osmdroid")
         conf.osmdroidBasePath = base
         conf.osmdroidTileCache = File(base, "tiles")
     }

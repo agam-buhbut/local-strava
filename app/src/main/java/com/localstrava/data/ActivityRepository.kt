@@ -22,6 +22,9 @@ class ActivityRepository(private val dao: RunDao) {
             )
         )
 
+    suspend fun logRun(startedAtEpochMs: Long, distanceMeters: Double, durationMs: Long, note: String?): Long =
+        dao.insertActivity(loggedActivity(startedAtEpochMs, distanceMeters, durationMs, note))
+
     suspend fun appendPoints(points: List<TrackPoint>) {
         if (points.isNotEmpty()) dao.insertPoints(points)
     }

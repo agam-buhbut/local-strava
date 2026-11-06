@@ -16,7 +16,6 @@ data class TrackingUiState(
     val elevationGainMeters: Double = 0.0,
     val currentPaceSecPerKm: Double? = null,
     val avgPaceSecPerKm: Double? = null,
-    val pointCount: Int = 0,
 ) {
     val isActive: Boolean get() = phase is TrackPhase.Active || phase is TrackPhase.Paused
 }

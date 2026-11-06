@@ -182,4 +182,110 @@ class RunAccumulatorTest {
         val pace = acc.snapshot(12_000).currentPaceSecPerKm!!
         assertEquals(333.0, pace, 30.0)
     }
+
+    // --- Barometric elevation channel (pressure-derived altitude fed separately from GPS) ---
+
+    // A sustained climb fed through the barometer channel produces gain, reusing the
+    // same median-smoother + hysteresis as the GPS path.
+    @Test fun elevationGainFromBarometerChannel() {
+        val acc = RunAccumulator()
+        acc.setBarometerActive(true)
+        val alts = listOf(100.0, 100.0, 101.0, 102.0, 103.0, 104.0, 105.0, 105.0, 105.0)
+        alts.forEach { acc.onBarometerAltitude(it) }
+        assertEquals(5.0, acc.snapshot(0).elevationGainMeters, 1.5)
+    }
+
+    // Sub-threshold barometer noise must not ratchet gain.
+    @Test fun barometerNoiseBelowThresholdProducesNoGain() {
+        val acc = RunAccumulator()
+        acc.setBarometerActive(true)
+        listOf(100.0, 100.5, 99.5, 100.5, 99.5, 100.5, 99.5, 100.0)
+            .forEach { acc.onBarometerAltitude(it) }
+        assertEquals(0.0, acc.snapshot(0).elevationGainMeters, 0.5)
+    }
+
+    // While the barometer channel is active, GPS altitude must NOT also contribute.
+    // Distinct magnitudes (GPS +10 m, barometer +3 m) make this a real suppression
+    // check, not a coincidence: the result must track the barometer's +3 m.
+    @Test fun gpsElevationSuppressedWhenBarometerActive() {
+        val acc = RunAccumulator()
+        acc.setBarometerActive(true)
+        val gpsAlts = listOf(200.0, 200.0, 203.0, 206.0, 209.0, 210.0, 210.0, 210.0, 210.0)
+        val baroAlts = listOf(50.0, 50.0, 51.0, 52.0, 53.0, 53.0, 53.0, 53.0, 53.0)
+        for (i in gpsAlts.indices) {
+            acc.update(fix(stepLat * i, t = i * 1000L, alt = gpsAlts[i])) // moving GPS fix w/ big climb
+            acc.onBarometerAltitude(baroAlts[i])                          // small barometer climb
+        }
+        assertEquals(3.0, acc.snapshot(gpsAlts.size * 1000L).elevationGainMeters, 1.5)
+    }
+
+    // With the barometer inactive, the GPS-altitude path is the fallback and still works.
+    @Test fun gpsElevationFallbackWhenBarometerUnavailable() {
+        val acc = RunAccumulator()
+        acc.setBarometerActive(false)
+        val alts = listOf(100.0, 100.0, 101.0, 102.0, 103.0, 104.0, 105.0, 105.0, 105.0)
+        alts.forEachIndexed { i, a -> acc.update(fix(stepLat * i, t = i * 1000L, alt = a)) }
+        assertEquals(5.0, acc.snapshot(alts.size * 1000L).elevationGainMeters, 1.5)
+    }
+
+    // Switching the active source mid-run must NOT inject a phantom gain from the
+    // (large) absolute-datum difference between barometer pseudo-altitude and GPS MSL.
+    @Test fun switchingElevationChannelDoesNotInjectFalseGain() {
+        val acc = RunAccumulator()
+        acc.setBarometerActive(true)
+        // ~5 m of real barometric climb.
+        listOf(100.0, 100.0, 101.0, 102.0, 103.0, 104.0, 105.0, 105.0, 105.0)
+            .forEach { acc.onBarometerAltitude(it) }
+        // Barometer drops out → GPS fallback, but on a totally different datum (~500 m), flat.
+        acc.setBarometerActive(false)
+        val gpsAlts = listOf(500.0, 500.0, 500.0, 500.0, 500.0)
+        gpsAlts.forEachIndexed { i, a -> acc.update(fix(stepLat * i, t = i * 1000L, alt = a)) }
+        // Only the ~5 m barometric climb survives; the ~400 m datum jump must be absorbed.
+        assertEquals(5.0, acc.snapshot(5000).elevationGainMeters, 1.5)
+    }
+
+    // Barometer gain must inherit manual-pause gating (no climbing the stairs at home counts).
+    @Test fun barometerElevationNotCountedWhileManuallyPaused() {
+        val acc = RunAccumulator()
+        acc.setBarometerActive(true)
+        acc.setManualPaused(true)
+        listOf(100.0, 100.0, 101.0, 102.0, 103.0, 104.0, 105.0, 105.0, 105.0)
+            .forEach { acc.onBarometerAltitude(it) }
+        assertEquals(0.0, acc.snapshot(0).elevationGainMeters, 0.01)
+    }
+
+    // Noise oscillation whose dips are BELOW the threshold must not bank gain: a dip of 0.9 m
+    // followed by a rise of 1.5 m from the dip is net ~0 terrain, but a baseline that ratchets
+    // down on ANY descent converts each cycle into +1.5 m of phantom gain (measured field
+    // over-count: app 19 m vs Strava 14 m). Descent must cross the same hysteresis threshold
+    // before it re-baselines.
+    @Test fun elevationOscillationBelowThresholdDoesNotBankGain() {
+        val acc = RunAccumulator()
+        acc.setBarometerActive(true)
+        // Runs of 5 identical samples flush the median-of-5 smoother to each plateau.
+        val plateaus = listOf(100.0, 99.1, 100.6, 99.1, 100.6)
+        plateaus.forEach { p -> repeat(5) { acc.onBarometerAltitude(p) } }
+        assertEquals(0.0, acc.snapshot(0).elevationGainMeters, 0.5)
+    }
+
+    // A genuine descent (past the threshold) must still re-baseline so the climb back up counts.
+    @Test fun genuineDescentThenClimbStillCountsGain() {
+        val acc = RunAccumulator()
+        acc.setBarometerActive(true)
+        val plateaus = listOf(100.0, 90.0, 100.0)
+        plateaus.forEach { p -> repeat(5) { acc.onBarometerAltitude(p) } }
+        assertEquals(10.0, acc.snapshot(0).elevationGainMeters, 1.5)
+    }
+
+    // Barometer gain must inherit auto-pause/stationary gating (standing at a light).
+    @Test fun barometerElevationNotCountedWhileStationary() {
+        val acc = RunAccumulator()
+        acc.setBarometerActive(true)
+        // Two stationary GPS fixes mark the run stationary.
+        acc.update(fix(0.0, t = 0, speed = 0.0f))
+        acc.update(fix(0.0, t = 1000, speed = 0.0f))
+        listOf(100.0, 100.0, 101.0, 102.0, 103.0, 104.0, 105.0, 105.0, 105.0)
+            .forEach { acc.onBarometerAltitude(it) }
+        assertEquals(0.0, acc.snapshot(2000).elevationGainMeters, 0.01)
+    }
 }

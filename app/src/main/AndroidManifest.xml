@@ -12,6 +12,10 @@
     <uses-feature
         android:name="android.hardware.location.gps"
         android:required="true" />
+    <!-- Barometer improves elevation accuracy when present; app falls back to GPS altitude. -->
+    <uses-feature
+        android:name="android.hardware.sensor.barometer"
+        android:required="false" />
 
     <application
         android:name=".LocalStravaApp"

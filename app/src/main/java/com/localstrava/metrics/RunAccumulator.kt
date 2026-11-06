@@ -35,6 +35,10 @@ class RunAccumulator {
     private var overAccuracyCount = 0
     private var teleportRejects = 0
 
+    // Elevation source select + last motion classification (for barometer gating).
+    private var barometerActive = false
+    private var stationary = false
+
     private val window = ArrayDeque<WindowSample>()
 
     private data class SpeedSample(val lat: Double, val lon: Double, val timeMs: Long)
@@ -52,6 +56,31 @@ class RunAccumulator {
             manualPaused = false
             pendingResumeBreak = true
         }
+    }
+
+    /**
+     * Select the active elevation source: GPS altitude (default) or the barometric channel.
+     * Barometer pseudo-altitude and GPS MSL altitude sit on different absolute datums, so
+     * every transition clears the smoothing buffer and re-baselines ([lastCommittedAlt] = null)
+     * — without zeroing accumulated gain — so the one-off datum gap is never counted as a climb.
+     * Same single-thread confinement as [update] (spec §3).
+     */
+    fun setBarometerActive(active: Boolean) {
+        if (active == barometerActive) return
+        barometerActive = active
+        altBuffer.clear()
+        lastCommittedAlt = null
+    }
+
+    /**
+     * Feed one barometer-derived altitude (metres). Ignored unless the barometer is the active
+     * source, and gated exactly like GPS elevation: no gain while manually paused or while the
+     * run is auto-paused (stationary). Same single-thread confinement as [update] (spec §3).
+     */
+    fun onBarometerAltitude(altitudeMeters: Double) {
+        if (!barometerActive) return
+        if (manualPaused || stationary) return
+        commitAltitude(altitudeMeters)
     }
 
     /** Process one fix. Returns the point to persist, or null if rejected/not stored. */
@@ -104,6 +133,7 @@ class RunAccumulator {
         // Stationary: advance anchor (so the next dt stays small) but add no distance/time.
         val speed = effectiveSpeed(fix, dist, dtSec)
         if (speed < Constants.STATIONARY_SPEED_MPS) {
+            stationary = true // gate the barometer channel too (no gain while auto-paused)
             anchor = Anchor(fix.latitude, fix.longitude, fix.timeMs)
             return null
         }
@@ -115,22 +145,24 @@ class RunAccumulator {
         }
 
         // Moving fix.
+        stationary = false
         distance += dist
         movingTime += dt
         anchor = Anchor(fix.latitude, fix.longitude, fix.timeMs)
-        updateElevation(fix)
+        if (!barometerActive) updateElevation(fix) // barometer owns elevation when active
         addToWindow(fix, segmentBreak = false)
         points++
         return AcceptedPoint(fix, segmentBreak = false)
     }
 
     private fun startSegment(fix: Fix, segmentBreak: Boolean): AcceptedPoint {
+        stationary = false
         anchor = Anchor(fix.latitude, fix.longitude, fix.timeMs)
         teleportRejects = 0
         // Reset the speed window so net displacement never spans a break/gap.
         speedWindow.clear()
         speedWindow.addLast(SpeedSample(fix.latitude, fix.longitude, fix.timeMs))
-        updateElevation(fix)
+        if (!barometerActive) updateElevation(fix) // barometer owns elevation when active
         addToWindow(fix, segmentBreak)
         points++
         return AcceptedPoint(fix, segmentBreak)
@@ -140,7 +172,15 @@ class RunAccumulator {
         val alt = fix.altitudeMeters ?: return
         val vacc = fix.verticalAccuracyMeters ?: return
         if (vacc > Constants.ELEV_VACC_MAX_M) return
+        commitAltitude(alt)
+    }
 
+    /**
+     * Shared elevation commit used by both the GPS path (after its vertical-accuracy gate)
+     * and the barometer channel: median-of-≤[ELEV_SMOOTH_WINDOW] smoother → commit positive
+     * gain past [ELEV_THRESHOLD_M] hysteresis → ratchet the baseline down on descents.
+     */
+    private fun commitAltitude(alt: Double) {
         altBuffer.addLast(alt)
         while (altBuffer.size > Constants.ELEV_SMOOTH_WINDOW) altBuffer.removeFirst()
         // Median of last ≤5; on an even count this takes the upper-middle by design.
@@ -154,8 +194,11 @@ class RunAccumulator {
             if (diff >= Constants.ELEV_THRESHOLD_M) {
                 elevationGain += diff
                 lastCommittedAlt = smoothed
-            } else if (smoothed < last) {
-                lastCommittedAlt = smoothed // ratchet down so future climbs count from the low
+            } else if (diff <= -Constants.ELEV_THRESHOLD_M) {
+                // Symmetric hysteresis: only a genuine descent re-baselines. Ratcheting down on
+                // sub-threshold dips converts noise oscillation into phantom gain (measured
+                // over-count vs Strava, 2026-07).
+                lastCommittedAlt = smoothed
             }
         }
     }

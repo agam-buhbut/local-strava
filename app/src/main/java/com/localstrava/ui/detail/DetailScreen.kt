@@ -15,6 +15,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -22,11 +23,13 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -59,7 +62,7 @@ fun DetailScreen(activityId: Long, onBack: () -> Unit, vm: DetailViewModel = vie
             state.activity?.let { a ->
                 StatsRow(
                     a.distanceMeters, a.movingTimeMs, a.elevationGainMeters,
-                    (a.endedAtEpochMs ?: a.startedAtEpochMs) - a.startedAtEpochMs,
+                    maxAltitudeM = state.points.mapNotNull { it.altitudeMeters }.maxOrNull(),
                 )
             }
             Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
@@ -86,12 +89,13 @@ fun DetailScreen(activityId: Long, onBack: () -> Unit, vm: DetailViewModel = vie
 }
 
 @Composable
-private fun StatsRow(distanceM: Double, movingMs: Long, elevM: Double, elapsedMs: Long) {
+private fun StatsRow(distanceM: Double, movingMs: Long, elevGainM: Double, maxAltitudeM: Double?) {
     Row(Modifier.fillMaxWidth().padding(16.dp), horizontalArrangement = Arrangement.SpaceBetween) {
         Stat("Distance", Format.distance(distanceM))
         Stat("Moving", Format.duration(movingMs))
-        Stat("Pace", if (distanceM >= 10.0) Format.pace(movingMs.toDouble() / distanceM) else "--")
-        Stat("Elev", Format.elevation(elevM))
+        Stat("Pace", Format.avgPace(distanceM, movingMs))
+        Stat("Elev gain", Format.elevation(elevGainM))
+        Stat("Max alt", maxAltitudeM?.let(Format::elevation) ?: "--")
     }
 }
 
@@ -114,9 +118,11 @@ private fun RouteMap(points: List<TrackPoint>) {
         }
     }
     var didFit by remember { mutableStateOf(false) }
-    DisposableEffectMapLifecycle(lifecycleOwner, mapView)
+    MapViewLifecycle(lifecycleOwner, mapView)
     AndroidView(
-        modifier = Modifier.fillMaxSize(),
+        // clipToBounds: osmdroid pans by scrolling its own canvas and can paint tiles outside its
+        // bounds inside Compose, drawing over the stats row above (the "disappearing bar").
+        modifier = Modifier.fillMaxSize().clipToBounds(),
         factory = { mapView },
         update = { map ->
             map.overlays.clear()
@@ -148,11 +154,11 @@ private fun RouteMap(points: List<TrackPoint>) {
 }
 
 @Composable
-private fun DisposableEffectMapLifecycle(
-    lifecycleOwner: androidx.lifecycle.LifecycleOwner,
+private fun MapViewLifecycle(
+    lifecycleOwner: LifecycleOwner,
     mapView: MapView,
 ) {
-    androidx.compose.runtime.DisposableEffect(lifecycleOwner) {
+    DisposableEffect(lifecycleOwner) {
         val obs = LifecycleEventObserver { _, e ->
             when (e) {
                 Lifecycle.Event.ON_RESUME -> mapView.onResume()

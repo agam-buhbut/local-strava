@@ -22,6 +22,7 @@ import com.localstrava.metrics.Constants
 import com.localstrava.metrics.Fix
 import com.localstrava.metrics.RunAccumulator
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.SupervisorJob
@@ -37,9 +38,10 @@ class TrackingService : Service() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO.limitedParallelism(1))
     private lateinit var repo: ActivityRepository
     private lateinit var locationSource: LocationSource
+    private var barometerSource: BarometerSource? = null
 
     private val accumulator = RunAccumulator()
-    private var startJob: kotlinx.coroutines.Deferred<Long>? = null
+    private var startJob: Deferred<Long>? = null
     private var startedAtMs: Long = 0L
     private val buffer = ArrayList<AcceptedPoint>()
     private var lastFlushMs: Long = 0L
@@ -48,7 +50,7 @@ class TrackingService : Service() {
     override fun onCreate() {
         super.onCreate()
         repo = ActivityRepository(RunDatabase.get(this).runDao())
-        locationSource = LocationSource(this, ::onFix, ::onLocationLost)
+        locationSource = LocationSourceFactory.create(this, ::onFix, ::onLocationLost)
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -72,6 +74,10 @@ class TrackingService : Service() {
         TrackingStateHolder.set(TrackingUiState(phase = TrackPhase.Active))
         startJob = scope.async { repo.startActivity(startedAtMs) }
         locationSource.start()
+        BarometerSource(this, ::onBarometerAltitude, ::onBarometerUnavailable).also {
+            barometerSource = it
+            it.start()
+        }
     }
 
     private fun handlePause() {
@@ -92,13 +98,13 @@ class TrackingService : Service() {
         val phase = TrackingStateHolder.state.value.phase
         if (phase != TrackPhase.Active && phase != TrackPhase.Paused) return
         locationSource.stop()
+        barometerSource?.stop() // synchronous, main thread — not inside scope.launch
         val endedAt = System.currentTimeMillis()
         val stats = accumulator.snapshot(endedAt)
         val tail = ArrayList(buffer) // copy on the main thread (buffer is main-thread-only)
         buffer.clear()
         val started = startedAtMs
-        val tooShort = stats.pointCount < Constants.MIN_SAVE_POINTS ||
-            stats.distanceMeters < Constants.MIN_SAVE_M
+        val tooShort = Constants.belowSaveThreshold(stats.pointCount, stats.distanceMeters)
         val job = startJob
         scope.launch {
             val id = job?.await() ?: 0L
@@ -130,6 +136,17 @@ class TrackingService : Service() {
         if (accepted != null) maybeFlush(fix.timeMs)
     }
 
+    // Barometer callbacks — delivered on the main Looper (Handler(mainLooper) in BarometerSource),
+    // so they share the accumulator's single-thread confinement with onFix.
+    private fun onBarometerAltitude(altitudeMeters: Double) {
+        accumulator.setBarometerActive(true) // first sample re-baselines onto the barometer datum
+        accumulator.onBarometerAltitude(altitudeMeters)
+    }
+
+    private fun onBarometerUnavailable() {
+        accumulator.setBarometerActive(false) // no/stale barometer → GPS-altitude fallback
+    }
+
     private fun onLocationLost() {
         // GPS/provider turned off mid-run. Do NOT pause the accumulator: its gap logic
         // (MAX_FIX_GAP_MS) makes a clean segment break for the dead interval and moving time
@@ -150,7 +167,6 @@ class TrackingService : Service() {
                 elevationGainMeters = s.elevationGainMeters,
                 currentPaceSecPerKm = s.currentPaceSecPerKm,
                 avgPaceSecPerKm = s.avgPaceSecPerKm,
-                pointCount = s.pointCount,
             )
         }
         val hundredM = (s.distanceMeters / 100).toInt()
@@ -235,6 +251,10 @@ class TrackingService : Service() {
     override fun onDestroy() {
         // Durability is covered by incremental flush + STOP flush + recoverInProgress();
         // do not block the main thread on a DB write here.
+        // Belt-and-suspenders: ensure the location request is released on any teardown path
+        // (a leaked FLP callback would keep requesting at 1 Hz). Idempotent with handleStop().
+        if (::locationSource.isInitialized) locationSource.stop()
+        barometerSource?.stop()
         scope.cancel()
         super.onDestroy()
     }

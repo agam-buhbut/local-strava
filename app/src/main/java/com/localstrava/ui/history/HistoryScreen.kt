@@ -79,8 +79,7 @@ fun HistoryScreen(
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun RunRow(run: Activity, onClick: () -> Unit) {
-    val pace = if (run.distanceMeters >= 10.0 && run.movingTimeMs > 0)
-        Format.pace(run.movingTimeMs.toDouble() / run.distanceMeters) else "--"
+    val pace = Format.avgPace(run.distanceMeters, run.movingTimeMs)
     ListItem(
         headlineContent = { Text(dateFmt.format(Date(run.startedAtEpochMs))) },
         supportingContent = {

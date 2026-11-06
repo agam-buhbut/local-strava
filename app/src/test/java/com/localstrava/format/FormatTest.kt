@@ -11,4 +11,8 @@ class FormatTest {
     @Test fun paceNullShowsDashes() = assertEquals("--", Format.pace(null))
     @Test fun paceFormatsMinutesPerKm() = assertEquals("5:30 /km", Format.pace(330.0))
     @Test fun elevationRoundsToMetres() = assertEquals("123 m", Format.elevation(123.4))
+    @Test fun avgPaceComputesFromDistanceAndMovingTime() =
+        assertEquals("5:30 /km", Format.avgPace(1000.0, 330_000))
+    @Test fun avgPaceBelowMinDistanceShowsDashes() = assertEquals("--", Format.avgPace(5.0, 60_000))
+    @Test fun avgPaceZeroMovingTimeShowsDashes() = assertEquals("--", Format.avgPace(100.0, 0))
 }

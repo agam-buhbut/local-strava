@@ -35,21 +35,17 @@ android {
 
     buildFeatures {
         compose = true
-        buildConfig = true
     }
 }
 
 dependencies {
     implementation(libs.androidx.core.ktx)
-    implementation(libs.androidx.lifecycle.runtime.ktx)
     implementation(libs.androidx.lifecycle.runtime.compose)
     implementation(libs.androidx.lifecycle.viewmodel.compose)
     implementation(libs.androidx.activity.compose)
 
     implementation(platform(libs.androidx.compose.bom))
     implementation(libs.androidx.ui)
-    implementation(libs.androidx.ui.graphics)
-    implementation(libs.androidx.ui.tooling.preview)
     implementation(libs.androidx.material3)
     implementation(libs.androidx.navigation.compose)
 
@@ -58,9 +54,7 @@ dependencies {
     ksp(libs.androidx.room.compiler)
 
     implementation(libs.osmdroid.android)
+    implementation(libs.play.services.location)
 
     testImplementation(libs.junit)
-    testImplementation(libs.kotlinx.coroutines.test)
-
-    debugImplementation(libs.androidx.ui.tooling)
 }

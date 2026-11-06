@@ -28,7 +28,14 @@ object Constants {
     const val ELEV_THRESHOLD_M = 1.5
     const val ELEV_SMOOTH_WINDOW = 5
 
+    // Barometric elevation (sensor lives in tracking/; this is its tunable)
+    const val BAROMETER_STALE_MS = 5_000L // no pressure sample this long → GPS fallback
+
     // Save policy
     const val MIN_SAVE_M = 10.0
     const val MIN_SAVE_POINTS = 2
+
+    /** Single save-policy predicate shared by live stop (service) and crash recovery (repo). */
+    fun belowSaveThreshold(pointCount: Int, distanceMeters: Double): Boolean =
+        pointCount < MIN_SAVE_POINTS || distanceMeters < MIN_SAVE_M
 }

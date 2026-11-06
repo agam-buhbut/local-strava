@@ -29,7 +29,7 @@ class LocalStravaApp : Application() {
         // and set a non-default User-Agent (the default "osmdroid" is banned by OSM).
         val conf = Configuration.getInstance()
         conf.load(this, getSharedPreferences("osmdroid", Context.MODE_PRIVATE))
-        conf.userAgentValue = BuildConfig.APPLICATION_ID
+        conf.userAgentValue = packageName
         val base = File(cacheDir, "osmdroid")
         conf.osmdroidBasePath = base
         conf.osmdroidTileCache = File(base, "tiles")

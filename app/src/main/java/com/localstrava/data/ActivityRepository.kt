@@ -33,7 +33,14 @@ class ActivityRepository(private val dao: RunDao) {
 
     suspend fun finalizeActivity(id: Long, startedAtEpochMs: Long, endedAtEpochMs: Long, stats: RunStats) {
         dao.updateActivity(
-            Activity(id, startedAtEpochMs, endedAtEpochMs, stats.movingTimeMs, stats.distanceMeters, stats.elevationGainMeters)
+            Activity(
+                id = id,
+                startedAtEpochMs = startedAtEpochMs,
+                endedAtEpochMs = endedAtEpochMs,
+                movingTimeMs = stats.movingTimeMs,
+                distanceMeters = stats.distanceMeters,
+                elevationGainMeters = stats.elevationGainMeters,
+            )
         )
     }
 
@@ -43,7 +50,7 @@ class ActivityRepository(private val dao: RunDao) {
     suspend fun recoverInProgress() {
         for (a in dao.getInProgressActivities()) {
             val points = dao.getPoints(a.id)
-            if (points.size < Constants.MIN_SAVE_POINTS || a.distanceMeters < Constants.MIN_SAVE_M) {
+            if (Constants.belowSaveThreshold(points.size, a.distanceMeters)) {
                 dao.deleteActivity(a.id)
             } else {
                 dao.updateActivity(a.copy(endedAtEpochMs = points.last().timestampEpochMs))

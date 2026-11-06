@@ -1,5 +1,6 @@
 package com.localstrava.format
 
+import com.localstrava.metrics.Constants
 import java.util.Locale
 
 object Format {
@@ -23,4 +24,9 @@ object Format {
     }
 
     fun elevation(meters: Double): String = String.format(Locale.US, "%d m", meters.toInt())
+
+    /** Whole-run average pace, "--" until the run is long enough to have a meaningful pace. */
+    fun avgPace(distanceMeters: Double, movingTimeMs: Long): String =
+        if (distanceMeters >= Constants.MIN_PACE_DISTANCE_M && movingTimeMs > 0)
+            pace(movingTimeMs.toDouble() / distanceMeters) else "--"
 }

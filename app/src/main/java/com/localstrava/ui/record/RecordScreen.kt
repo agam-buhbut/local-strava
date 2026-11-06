@@ -38,9 +38,10 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import androidx.lifecycle.viewmodel.compose.viewModel
 import com.localstrava.format.Format
 import com.localstrava.tracking.TrackPhase
+import com.localstrava.tracking.TrackingService
+import com.localstrava.tracking.TrackingStateHolder
 import com.localstrava.tracking.TrackingUiState
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -49,16 +50,19 @@ fun RecordScreen(
     onFinished: (Long) -> Unit,
     onDiscarded: () -> Unit,
     onExitToHistory: () -> Unit,
-    vm: RecordViewModel = viewModel(),
 ) {
-    val state by vm.state.collectAsStateWithLifecycle()
+    val state by TrackingStateHolder.state.collectAsStateWithLifecycle()
     val context = LocalContext.current
     var showSettingsHint by remember { mutableStateOf(false) }
 
     LaunchedEffect(state.phase) {
         when (val p = state.phase) {
-            is TrackPhase.Finished -> { val id = p.activityId; vm.consumeTerminal(); onFinished(id) }
-            is TrackPhase.Discarded -> { vm.consumeTerminal(); onDiscarded() }
+            is TrackPhase.Finished -> {
+                val id = p.activityId
+                TrackingStateHolder.consumeTerminal()
+                onFinished(id)
+            }
+            is TrackPhase.Discarded -> { TrackingStateHolder.consumeTerminal(); onDiscarded() }
             else -> Unit
         }
     }
@@ -77,7 +81,7 @@ fun RecordScreen(
         val fine = result[Manifest.permission.ACCESS_FINE_LOCATION] == true ||
             ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) ==
             PackageManager.PERMISSION_GRANTED
-        if (fine) { showSettingsHint = false; vm.start() } else { showSettingsHint = true }
+        if (fine) { showSettingsHint = false; TrackingService.start(context) } else { showSettingsHint = true }
         // notification denial is non-fatal (spec §8)
     }
 
@@ -86,7 +90,7 @@ fun RecordScreen(
             context, Manifest.permission.ACCESS_FINE_LOCATION,
         ) == PackageManager.PERMISSION_GRANTED
         if (fine) {
-            vm.start()
+            TrackingService.start(context)
         } else {
             showSettingsHint = false
             launcher.launch(perms)
@@ -140,7 +144,13 @@ fun RecordScreen(
                 SmallStat("Elev", Format.elevation(state.elevationGainMeters))
             }
             Spacer(Modifier.weight(1f))
-            Controls(state, ::onStartClicked, vm::pause, vm::resume, vm::stop)
+            Controls(
+                state,
+                onStart = ::onStartClicked,
+                onPause = { TrackingService.pause(context) },
+                onResume = { TrackingService.resume(context) },
+                onStop = { TrackingService.stop(context) },
+            )
         }
     }
 }

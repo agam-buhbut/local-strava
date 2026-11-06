@@ -1,6 +1,7 @@
 # Pocket-proof runs, goal bell, notebook, offline map, lock-screen view, dark redesign
 
 **Date:** 2026-11-05
+**Status:** Implemented 2026-11-06 on `feat/run-features` (plan `../plans/2026-11-06-run-features.md`). §6 phone checklist pending on the S24.
 **Builds on:** `2026-06-07-local-strava-design.md` and the (uncommitted) accuracy work in
 `../plans/2026-06-15-accuracy-improvements.md`.
 **Approved look:** `2026-11-05-run-features-mockup.html` (open in a browser; it is the visual

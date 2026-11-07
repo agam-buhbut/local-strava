@@ -94,7 +94,7 @@ internal fun ReadyContent(
                 }
             }
             Text(
-                "Rings and vibrates once, even in your pocket.",
+                "Rings, stops your music and ends the run, even in your pocket.",
                 Modifier.fillMaxWidth().padding(top = 22.dp),
                 color = RunColors.Mist,
                 fontSize = 13.5.sp,

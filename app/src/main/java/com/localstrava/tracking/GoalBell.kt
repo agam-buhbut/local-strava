@@ -2,6 +2,8 @@ package com.localstrava.tracking
 
 import android.content.Context
 import android.media.AudioAttributes
+import android.media.AudioFocusRequest
+import android.media.AudioManager
 import android.media.Ringtone
 import android.media.RingtoneManager
 import android.os.Build
@@ -14,15 +16,20 @@ import android.os.VibratorManager
 
 /**
  * Rings once when the run goal is reached (spec §4.2): the default alarm tone for [RING_MS] plus a
- * short buzz, both with ALARM usage so they're heard/felt in a pocket on silent or mute. Nothing is
- * prepared until [ring] — the service creates this in onCreate (context attached), main thread only.
+ * short buzz, both with ALARM usage so they're heard/felt in a pocket on silent or mute. It also
+ * stops any music: permanent audio focus makes players stop for good (they only resume after a
+ * transient loss). Nothing is prepared until [ring] — the service creates this in onCreate
+ * (context attached), main thread only.
  */
 class GoalBell(private val context: Context) {
     private val handler = Handler(Looper.getMainLooper())
     private var ringtone: Ringtone? = null
+    private val audio = context.getSystemService(AudioManager::class.java)
+    private val focus = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN).setAudioAttributes(ALARM_AUDIO).build()
 
     fun ring() {
         release()
+        audio.requestAudioFocus(focus)
         val uri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_ALARM)
             ?: RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION)
         ringtone = RingtoneManager.getRingtone(context, uri)?.apply {
@@ -37,6 +44,7 @@ class GoalBell(private val context: Context) {
         handler.removeCallbacksAndMessages(null)
         ringtone?.stop()
         ringtone = null
+        audio.abandonAudioFocusRequest(focus) // music stays stopped: its loss was permanent
     }
 
     private fun vibrate() {
@@ -58,10 +66,10 @@ class GoalBell(private val context: Context) {
             context.getSystemService(Vibrator::class.java)
         }
 
-    private companion object {
+    companion object {
         const val RING_MS = 4_000L
-        val PATTERN = longArrayOf(0, 600, 300, 600, 300, 600)
-        val ALARM_AUDIO: AudioAttributes = AudioAttributes.Builder()
+        private val PATTERN = longArrayOf(0, 600, 300, 600, 300, 600)
+        private val ALARM_AUDIO: AudioAttributes = AudioAttributes.Builder()
             .setUsage(AudioAttributes.USAGE_ALARM)
             .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
             .build()

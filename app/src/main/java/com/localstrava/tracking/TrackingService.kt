@@ -31,6 +31,7 @@ import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 class TrackingService : Service() {
@@ -101,7 +102,7 @@ class TrackingService : Service() {
         pushNotification(paused = false, lost = false)
     }
 
-    private fun handleStop() {
+    private fun handleStop(lingerMs: Long = 0L) {
         val phase = TrackingStateHolder.state.value.phase
         if (phase != TrackPhase.Active && phase != TrackPhase.Paused) return
         locationSource.stop()
@@ -124,6 +125,9 @@ class TrackingService : Service() {
                 if (tooShort || id == 0L) TrackingUiState(phase = TrackPhase.Discarded)
                 else TrackingUiState(phase = TrackPhase.Finished(id)),
             )
+            // Goal stop: stay a foreground service until the bell is done; onDestroy would cut it off.
+            delay(lingerMs)
+            if (TrackingStateHolder.state.value.isActive) return@launch // a new run took over the service
             stopForeground(STOP_FOREGROUND_REMOVE)
             stopSelf()
         }
@@ -178,10 +182,13 @@ class TrackingService : Service() {
             )
         }
         // Once per run: goalReached latches; the service is the state's only writer (main thread).
+        // Reaching the goal rings the bell and ends the run (saved like a normal Stop).
         val st = TrackingStateHolder.state.value
         if (st.goal != null && !st.goalReached && st.goal.isReached(s.distanceMeters, s.movingTimeMs)) {
             TrackingStateHolder.update { it.copy(goalReached = true) }
             bell.ring()
+            handleStop(lingerMs = GoalBell.RING_MS)
+            return
         }
         val hundredM = (s.distanceMeters / 100).toInt()
         if (hundredM != lastNotifiedHundredM) {

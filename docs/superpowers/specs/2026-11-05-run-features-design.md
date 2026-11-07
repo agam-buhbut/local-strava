@@ -81,11 +81,14 @@ style.
 - The goal travels to `TrackingService` with the START intent. The service checks it each time
   it publishes stats. **Distance** is compared to recorded distance. **Time** is compared to
   moving time, the same number shown on screen, so it doesn't advance while paused or
-  auto-paused. It fires once per run.
+  auto-paused. It fires once per run, and reaching the goal also **ends the run**: it is saved
+  like a normal Stop, and the service stays up until the bell finishes (owner request,
+  2026-11-07).
 - **The ring:** the phone's default alarm tone (`RingtoneManager.TYPE_ALARM`) with alarm audio
   attributes, so it is heard even when the phone is on silent. It plays for about 4 seconds,
   together with a vibration pattern. No sound files are bundled. *(My call. The point is hearing
-  it from a pocket.)*
+  it from a pocket.)* It takes permanent audio focus, so music from other apps stops and does
+  not resume (owner request, 2026-11-07).
 - **GPS label** (top right of mockup 2): reuse the existing `locationLost` state. It shows
   "GPS on" normally and "GPS lost" in amber when lost. No new signal-strength value from the
   service. *(My call. Keeps the tracking path untouched.)*
@@ -97,7 +100,9 @@ style.
 
 - **Entry:** a "Log a run" button next to "Start run" on History (mockup 3), opening the form
   (mockup 5).
-- **Fields:** *When* (date and time pickers, defaults to now). *Distance* in km (more than 0,
+- **Fields:** *When* (date and time pickers; defaults to "Now", which means the run just ended,
+  so it is saved as starting *time* before the moment of saving. A picked date and time is the
+  start). *Distance* in km (more than 0,
   accept `.` or `,` as the decimal point). *Time* in h/m/s (total more than 0). *Note*
   (optional). Pace is shown live once distance and time are valid. "Save run" is disabled until
   they are.
@@ -183,7 +188,8 @@ with a checklist the owner runs on the S24 with the new APK. Failures come back 
 
 1. Old runs are all still in History after installing over the current build.
 2. Start a run, lock the phone, walk 5+ minutes, unlock: time and distance kept up.
-3. With the phone on silent, set a short goal (0.5 km or 5 min). It rings and vibrates.
+3. With the phone on silent and music playing, set a short goal (0.5 km or 5 min). It rings
+   and vibrates, the music stops, and the run ends and opens in its details.
 4. Mid-run, lock the phone and press power: the run screen shows without unlocking. Swiping
    home asks for the unlock.
 5. Tapping Stop does nothing. Holding it for about a second stops the run.

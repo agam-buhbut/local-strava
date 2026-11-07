@@ -33,4 +33,7 @@ fun loggedStartMs(utcDateMs: Long, hour: Int, minute: Int, zone: ZoneId): Long =
         .toInstant()
         .toEpochMilli()
 
+/** No time picked means "I just finished": the run started [durationMs] before [nowMs]. */
+fun logStartMs(pickedStartMs: Long?, nowMs: Long, durationMs: Long): Long = pickedStartMs ?: (nowMs - durationMs)
+
 private const val MAX_KM = 1000.0

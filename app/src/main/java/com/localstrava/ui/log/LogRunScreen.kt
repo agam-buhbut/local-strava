@@ -41,7 +41,6 @@ import androidx.compose.material3.rememberDatePickerState
 import androidx.compose.material3.rememberTimePickerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -73,7 +72,7 @@ private val dateFmt = SimpleDateFormat("EEE d MMM, HH:mm", Locale.getDefault())
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun LogRunScreen(onDone: () -> Unit, vm: LogRunViewModel = viewModel()) {
-    var whenMs by rememberSaveable { mutableLongStateOf(System.currentTimeMillis()) }
+    var whenMs by rememberSaveable { mutableStateOf<Long?>(null) } // null = "Now": ends the run at save time
     var distance by rememberSaveable { mutableStateOf("") }
     var hours by rememberSaveable { mutableStateOf("") }
     var minutes by rememberSaveable { mutableStateOf("") }
@@ -99,7 +98,7 @@ fun LogRunScreen(onDone: () -> Unit, vm: LogRunViewModel = viewModel()) {
             Button(
                 onClick = {
                     saving = true
-                    vm.save(whenMs, distanceM!!, durationMs!!, note, onDone)
+                    vm.save(logStartMs(whenMs, System.currentTimeMillis(), durationMs!!), distanceM!!, durationMs, note, onDone)
                 },
                 enabled = valid && !saving,
                 modifier = Modifier
@@ -125,7 +124,7 @@ fun LogRunScreen(onDone: () -> Unit, vm: LogRunViewModel = viewModel()) {
                     .clickable { pickingDate = true }
                     .padding(horizontal = 16.dp),
                 contentAlignment = Alignment.CenterStart,
-            ) { Text(dateFmt.format(Date(whenMs)), fontSize = 18.sp) }
+            ) { Text(whenMs?.let { dateFmt.format(Date(it)) } ?: "Now", fontSize = 18.sp) }
 
             FieldLabel("Distance")
             NumberField(distance, { distance = it }, "km", KeyboardType.Decimal, Modifier.fillMaxWidth())
@@ -165,7 +164,7 @@ fun LogRunScreen(onDone: () -> Unit, vm: LogRunViewModel = viewModel()) {
     if (pickingDate) {
         val zone = ZoneId.systemDefault()
         // The picker works in UTC midnights; seed it with the current local day.
-        val initial = Instant.ofEpochMilli(whenMs).atZone(zone).toLocalDate()
+        val initial = Instant.ofEpochMilli(whenMs ?: System.currentTimeMillis()).atZone(zone).toLocalDate()
             .atStartOfDay(ZoneOffset.UTC).toInstant().toEpochMilli()
         val state = rememberDatePickerState(initialSelectedDateMillis = initial)
         DatePickerDialog(
@@ -181,7 +180,7 @@ fun LogRunScreen(onDone: () -> Unit, vm: LogRunViewModel = viewModel()) {
 
     pickedDateUtc?.let { dateUtc ->
         val zone = ZoneId.systemDefault()
-        val now = Instant.ofEpochMilli(whenMs).atZone(zone)
+        val now = Instant.ofEpochMilli(whenMs ?: System.currentTimeMillis()).atZone(zone)
         val state = rememberTimePickerState(
             initialHour = now.hour,
             initialMinute = now.minute,
